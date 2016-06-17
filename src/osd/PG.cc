@@ -1889,7 +1889,7 @@ void PG::take_op_map_waiters()
       break;
     } else {
       (*i)->mark_queued_for_pg();
-      osd->op_wq.queue(make_pair(PGRef(this), *i));
+      osd->op_wq.queue(make_pair(PGRef(this), PGQueueable(*i)));
       waiting_for_map.erase(i++);
     }
   }
@@ -1910,7 +1910,7 @@ void PG::queue_op(OpRequestRef& op)
     return;
   }
   op->mark_queued_for_pg();
-  osd->op_wq.queue(make_pair(PGRef(this), op));
+  osd->op_wq.queue(make_pair(PGRef(this), PGQueueable(op)));
   {
     // after queue() to include any locking costs
 #ifdef WITH_LTTNG
@@ -3297,7 +3297,7 @@ void PG::requeue_object_waiters(map<hobject_t, list<OpRequestRef>, hobject_t::Bi
 
 void PG::requeue_op(OpRequestRef op)
 {
-  osd->op_wq.queue_front(make_pair(PGRef(this), op));
+  osd->op_wq.queue_front(make_pair(PGRef(this), PGQueueable(op)));
 }
 
 void PG::requeue_ops(list<OpRequestRef> &ls)
@@ -3306,7 +3306,7 @@ void PG::requeue_ops(list<OpRequestRef> &ls)
   for (list<OpRequestRef>::reverse_iterator i = ls.rbegin();
        i != ls.rend();
        ++i) {
-    osd->op_wq.queue_front(make_pair(PGRef(this), *i));
+    osd->op_wq.queue_front(make_pair(PGRef(this), PGQueueable(*i)));
   }
   ls.clear();
 }
