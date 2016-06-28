@@ -15,7 +15,7 @@
 
 #include <memory>
 
-#include "osd/mClockOpClassAdapter.h"
+#include "osd/mClockClientQueue.h"
 #include "common/dout.h"
 
 
@@ -30,7 +30,7 @@ namespace dmc = crimson::dmclock;
 
 namespace ceph {
 
-  mClockOpClassQueue::mclock_op_tags_t::mclock_op_tags_t(CephContext *cct) :
+  mClockClientQueue::mclock_op_tags_t::mclock_op_tags_t(CephContext *cct) :
     client_op(cct->_conf->osd_op_queue_mclock_client_op_res,
 	      cct->_conf->osd_op_queue_mclock_client_op_wgt,
 	      cct->_conf->osd_op_queue_mclock_client_op_lim),
@@ -48,7 +48,7 @@ namespace ceph {
 	  cct->_conf->osd_op_queue_mclock_scrub_lim)
   {
     dout(20) <<
-      "mClockOpClassQueue settings:: " <<
+      "mClockClientQueue settings:: " <<
       "client_op:" << client_op <<
       "; osd_subop:" << osd_subop <<
       "; snaptrim:" << snaptrim <<
@@ -59,8 +59,9 @@ namespace ceph {
 
 
   dmc::ClientInfo
-  mClockOpClassQueue::op_class_client_info_f(const osd_op_type_t& op_type) {
-    switch(op_type) {
+  mClockClientQueue::op_class_client_info_f(
+    const mClockClientQueue::InnerClient& client) {
+    switch(client.second) {
     case osd_op_type_t::client_op:
       return mclock_op_tags->client_op;
     case osd_op_type_t::osd_subop:
@@ -77,19 +78,19 @@ namespace ceph {
     }
   }
 
+
   /*
-   * class mClockOpClassQueue
+   * class mClockClientQueue
    */
 
-  std::unique_ptr<mClockOpClassQueue::mclock_op_tags_t>
-  mClockOpClassQueue::mclock_op_tags(nullptr);
+  std::unique_ptr<mClockClientQueue::mclock_op_tags_t>
+  mClockClientQueue::mclock_op_tags(nullptr);
 
-  mClockOpClassQueue::pg_queueable_visitor_t
-  mClockOpClassQueue::pg_queueable_visitor;
+  mClockClientQueue::pg_queueable_visitor_t
+  mClockClientQueue::pg_queueable_visitor;
 
-  mClockOpClassQueue::mClockOpClassQueue(CephContext *cct) :
-    queue(&mClockOpClassQueue::op_class_client_info_f),
-    cost_factor(cct->_conf->osd_op_queue_mclock_cost_factor)
+  mClockClientQueue::mClockClientQueue(CephContext *cct) :
+    queue(&mClockClientQueue::op_class_client_info_f)
   {
     // manage the singleton
     if (!mclock_op_tags) {
@@ -97,8 +98,8 @@ namespace ceph {
     }
   }
 
-  mClockOpClassQueue::osd_op_type_t
-  mClockOpClassQueue::get_osd_op_type(const Request& request) {
+  mClockClientQueue::osd_op_type_t
+  mClockClientQueue::get_osd_op_type(const Request& request) {
     osd_op_type_t type =
       boost::apply_visitor(pg_queueable_visitor, request.second.get_variant());
 
@@ -116,8 +117,14 @@ namespace ceph {
     }
   }
 
+  mClockClientQueue::InnerClient
+  mClockClientQueue::get_inner_client(const Client& cl,
+				      const Request& request) {
+    return InnerClient(cl, get_osd_op_type(request));
+  }
+
   // Formatted output of the queue
-  void mClockOpClassQueue::dump(ceph::Formatter *f) const {
+  void mClockClientQueue::dump(ceph::Formatter *f) const {
     queue.dump(f);
   }
 
