@@ -55,6 +55,7 @@ namespace ceph {
     using queue_t = mClockQueue<Request, InnerClient>;
 
     queue_t queue;
+    CephContext* cct;
 
     struct mclock_op_tags_t {
       crimson::dmclock::ClientInfo client_op;
