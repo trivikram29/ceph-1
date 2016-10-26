@@ -91,7 +91,8 @@ namespace ceph {
   mClockClientQueue::pg_queueable_visitor;
 
   mClockClientQueue::mClockClientQueue(CephContext *cct) :
-    queue(&mClockClientQueue::op_class_client_info_f)
+    queue(&mClockClientQueue::op_class_client_info_f),
+    cct(cct)
   {
     // manage the singleton
     if (!mclock_op_tags) {
