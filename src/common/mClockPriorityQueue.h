@@ -364,21 +364,21 @@ namespace ceph {
     } // dump
 
     friend std::ostream& operator<<(std::ostream& out, const mClockQueue& q) {
-      out << "{\n";
+      out << "{";
       {
 	int size = 0;
 	for (auto i = q.high_queue.crbegin(); i != q.high_queue.crend(); ++i) {
 	  size += i->second.length();
 	}
-	out << "  { high_queue:: size:" << size << " }\n";
+	out << " { high_queue:: size:" << size << " }";
       }
-      out << "  { queue_front:: size:" << q.queue_front.size() << " }\n";
+      out << " { queue_front:: size:" << q.queue_front.size() << " }";
       {
 	std::stringstream ss;
 	q.queue.display_queues(ss, false, false, true, false);
-	out << "  { queue:: " << ss.str() << " }\n";
+	out << " { queue:: " << ss.str() << " }";
       }
-      out << "}\n";
+      out << " }";
       return out;
     }
   }; // class mClockQueue
