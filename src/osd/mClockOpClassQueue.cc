@@ -30,7 +30,7 @@ namespace dmc = crimson::dmclock;
 #define dout_prefix *_dout
 
 
-#define TEMPORARY 1
+#define SHOW_ENQ_DEQ 0
 
 
 namespace ceph {
@@ -184,11 +184,9 @@ namespace ceph {
 					  unsigned priority,
 					  unsigned cost,
 					  Request item) {
-#ifdef TEMPORARY
-    std::stringstream ss;
-#endif
     auto t = get_osd_op_type(item);
-#ifdef TEMPORARY
+#ifdef SHOW_ENQ_DEQ
+    std::stringstream ss;
     bool show =
       osd_op_type_t::bg_recovery == t || osd_op_type_t::client_op == t;
     if (show && false) {
@@ -197,7 +195,7 @@ namespace ceph {
     }
 #endif
     queue.enqueue(t, priority, cost, item);
-#ifdef TEMPORARY
+#ifdef SHOW_ENQ_DEQ
     if (show) {
       ss << queue;
       dout(0) << "{ " << ss.str() << " }" << dendl;
@@ -205,13 +203,27 @@ namespace ceph {
 #endif
   }
 
-  // Return an op to be dispatch
+  // return an op to be dispatched
   inline Request mClockOpClassQueue::dequeue() {
+#if SHOW_ENQ_DEQ
+    std::stringstream queue_before;
+    queue_before << queue;
+#endif
     Request result = queue.dequeue();
-#if 0
+#if SHOW_ENQ_DEQ
     auto t = get_osd_op_type(result);
+    bool show = false;
     if (osd_op_type_t::bg_recovery == t) {
       dout(0) << "mclock dequeue recover op " << result << dendl;
+    } else if (osd_op_type_t::bg_scrub == t) {
+      show = true;
+    }
+    if (show) {
+      std::stringstream queue_after;
+      queue_after << queue;
+      dout(0) << "mclock dequeue scrub op; req:" << result <<
+	"; queue_before:" << queue_before.str() <<
+	"; queue_after:" << queue_after.str() << dendl;
     }
 #endif
     return result;
