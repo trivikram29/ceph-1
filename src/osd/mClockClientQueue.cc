@@ -16,13 +16,12 @@
 #include <memory>
 
 #include "osd/mClockClientQueue.h"
-#include "common/dout.h"
+#include "common/debug.h"
 
 
 namespace dmc = crimson::dmclock;
 
 
-#define dout_context cct
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 #define dout_prefix *_dout
@@ -47,7 +46,7 @@ namespace ceph {
 	  cct->_conf->osd_op_queue_mclock_scrub_wgt,
 	  cct->_conf->osd_op_queue_mclock_scrub_lim)
   {
-    dout(20) <<
+    ldout(cct, 20) <<
       "mClockClientQueue settings:: " <<
       "client_op:" << client_op <<
       "; osd_subop:" << osd_subop <<

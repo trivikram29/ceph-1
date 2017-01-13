@@ -17,20 +17,19 @@
 #include <sstream>
 
 #include "osd/mClockOpClassQueue.h"
-#include "common/dout.h"
+#include "common/debug.h"
 #include "common/ignore_warning.h"
 
 
 namespace dmc = crimson::dmclock;
 
 
-#define dout_context cct
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 #define dout_prefix *_dout
 
 
-#define SHOW_ENQ_DEQ 0
+#define SHOW_ENQ_DEQ 1
 
 
 namespace ceph {
@@ -65,7 +64,7 @@ namespace ceph {
 	  cct->_conf->osd_op_queue_mclock_scrub_wgt,
 	  cct->_conf->osd_op_queue_mclock_scrub_lim)
   {
-    dout(20) <<
+    ldout(cct, 20) <<
       "mClockOpClassQueue settings:: " <<
       "client_op:" << client_op <<
       "; osd_subop:" << osd_subop <<
@@ -174,7 +173,7 @@ namespace ceph {
     queue.enqueue_strict(t, 0, item);
 #if 0
     if (osd_op_type_t::bg_recovery == t) {
-      dout(0) << "mclock enqueue_strict recover op " << item << dendl;
+      ldout(cct, 0) << "mclock enqueue_strict recover op " << item << dendl;
     }
 #endif
   }
@@ -191,14 +190,14 @@ namespace ceph {
       osd_op_type_t::bg_recovery == t || osd_op_type_t::client_op == t;
     if (show && false) {
       ss << queue;
-      dout(0) << "{ before:" << ss.str() << " }" << dendl;
+      ldout(cct, 0) << "{ before:" << ss.str() << " }" << dendl;
     }
 #endif
     queue.enqueue(t, priority, cost, item);
 #ifdef SHOW_ENQ_DEQ
     if (show) {
       ss << queue;
-      dout(0) << "{ " << ss.str() << " }" << dendl;
+      ldout(cct, 0) << "{ " << ss.str() << " }" << dendl;
     }
 #endif
   }
@@ -214,14 +213,14 @@ namespace ceph {
     auto t = get_osd_op_type(result);
     bool show = false;
     if (osd_op_type_t::bg_recovery == t) {
-      dout(0) << "mclock dequeue recover op " << result << dendl;
+      ldout(cct, 0) << "mclock dequeue recover op " << result << dendl;
     } else if (osd_op_type_t::bg_scrub == t) {
       show = true;
     }
     if (show) {
       std::stringstream queue_after;
       queue_after << queue;
-      dout(0) << "mclock dequeue scrub op; req:" << result <<
+      ldout(cct, 0) << "mclock dequeue scrub op; req:" << result <<
 	"; queue_before:" << queue_before.str() <<
 	"; queue_after:" << queue_after.str() << dendl;
     }

@@ -24,7 +24,6 @@ static ostream& _prefix(std::ostream* _dout, int whoami, epoch_t epoch) {
   return *_dout << "osd." << whoami << " " << epoch << " ";
 }
 
-#define dout_context osd->cct
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 #define dout_prefix _prefix(_dout, osd->whoami, osd->get_osdmap_epoch())
@@ -48,7 +47,7 @@ void PGQueueable::RunVis::operator()(const OpRequestRef &op) {
     op_map[MSG_OSD_PG_UPDATE_LOG_MISSING_REPLY] = "MSG_OSD_PG_UPDATE_LOG_MISSING_REPLY";
   }
   // TODO remove dout
-  dout(0) << "OPQUEUE DEBUG executing dequeue_op" << dendl;
+  ldout(osd->cct, 0) << "OPQUEUE DEBUG executing dequeue_op" << dendl;
   // auto op_type = op->get_req()->get_header().type;
   auto op_type = op->get_req()->get_type();
   std::ostringstream op_out;
@@ -56,26 +55,26 @@ void PGQueueable::RunVis::operator()(const OpRequestRef &op) {
   std::string op_name = op_map[op_type];
   static std::string unknown = "UNKNOWN";
   if ("" == op_name) op_name = unknown;
-  dout(0) << "OPWATCH opval:" << op_type << " op:" << op_map[op_type] <<
+  ldout(osd->cct, 0) << "OPWATCH opval:" << op_type << " op:" << op_map[op_type] <<
     " " << op_out.str() << dendl;
   osd->dequeue_op(pg, op, handle);
 }
 
 void PGQueueable::RunVis::operator()(const PGSnapTrim &op) {
   // TODO remove dout
-  dout(0) << "OPWATCH op:snaptrim" << dendl;
+  ldout(osd->cct, 0) << "OPWATCH op:snaptrim" << dendl;
   pg->snap_trimmer(op.epoch_queued);
 }
 
 void PGQueueable::RunVis::operator()(const PGScrub &op) {
   // TODO remove dout
-  dout(0) << "OPWATCH op:scrub" << dendl;
+  ldout(osd->cct, 0) << "OPWATCH op:scrub" << dendl;
   pg->scrub(op.epoch_queued, handle);
 }
 
 void PGQueueable::RunVis::operator()(const PGRecovery &op) {
   // TODO remove dout
-  dout(0) << "OPWATCH op:recovery" << dendl;
+  ldout(osd->cct, 0) << "OPWATCH op:recovery" << dendl;
   osd->do_recovery(pg.get(), op.epoch_queued, op.reserved_pushes, handle);
 }
 
