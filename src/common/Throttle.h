@@ -4,6 +4,7 @@
 #ifndef CEPH_THROTTLE_H
 #define CEPH_THROTTLE_H
 
+
 #include "Mutex.h"
 #include "Cond.h"
 #include <list>
@@ -13,6 +14,12 @@
 #include <chrono>
 #include "include/atomic.h"
 #include "include/Context.h"
+
+// this will clobber _ASSERT_H
+#include "spline.h"
+// the following is done to unclobber _ASSERT_H so it returns to the
+// way ceph likes it
+#include "include/assert.h"
 
 class CephContext;
 class PerfCounters;
@@ -313,5 +320,18 @@ private:
 
   void complete_pending_ops();
 };
+
+
+class CubicModelThrottle : public BackoffThrottle {
+  ::tk::spline spline;
+
+public:
+  CubicModelThrottle(
+    unsigned expected_concurrency ///< [in] determines size of conds
+    ) :
+    BackoffThrottle(expected_concurrency)
+  {}
+
+}; // class CubicModelThrottle
 
 #endif

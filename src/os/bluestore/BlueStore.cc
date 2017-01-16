@@ -3,7 +3,7 @@
 /*
  * Ceph - scalable distributed file system
  *
- * Copyright (C) 2014 Red Hat
+ * Copyright (C) 2016 Red Hat
  *
  * This is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -1619,11 +1619,11 @@ bool BlueStore::ExtentMap::update(Onode *o, KeyValueDB::Transaction t,
 		 << " extents" << dendl;
 
         //indicate need for reshard if force mode selected, len > shard_max size OR
-        //non-last shard size is below the min threshold. The last check is to avoid potential 
+        //non-last shard size is below the min threshold. The last check is to avoid potential
         //unneeded reshardings since this might happen permanently.
         if (!force &&
             (len > g_conf->bluestore_extent_map_shard_max_size ||
-              (n != shards.end() && len < g_conf->bluestore_extent_map_shard_min_size) 
+              (n != shards.end() && len < g_conf->bluestore_extent_map_shard_min_size)
              )) {
           return true;
         }
@@ -2487,6 +2487,12 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
     fsid_fd(-1),
     mounted(false),
     coll_lock("BlueStore::coll_lock"),
+#ifdef MODEL_THROTTLE
+    throttle_ops(cct->_conf->bluestore_caller_concurrency),
+    throttle_bytes(cct->_conf->bluestore_caller_concurrency),
+    throttle_wal_ops(cct->_conf->bluestore_caller_concurrency),
+    throttle_wal_bytes(cct->_conf->bluestore_caller_concurrency),
+#else
     throttle_ops(cct, "bluestore_max_ops", cct->_conf->bluestore_max_ops),
     throttle_bytes(cct, "bluestore_max_bytes", cct->_conf->bluestore_max_bytes),
     throttle_wal_ops(cct, "bluestore_wal_max_ops",
@@ -2495,6 +2501,7 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
     throttle_wal_bytes(cct, "bluestore_wal_max_bytes",
 		       cct->_conf->bluestore_max_bytes +
 		       cct->_conf->bluestore_wal_max_bytes),
+#endif
     wal_tp(cct,
 	   "BlueStore::wal_tp",
            "tp_wal",
@@ -2602,7 +2609,7 @@ void BlueStore::_set_compression()
            << dendl;
     }
   }
- 
+
   dout(10) << __func__ << " mode " << Compressor::get_comp_mode_name(comp_mode)
 	   << " alg " << (compressor ? compressor->get_type_name() : "(none)")
 	   << dendl;
@@ -2717,6 +2724,15 @@ void BlueStore::_init_logger()
 	    "fill out the block");
   b.add_u64(l_bluestore_write_small_new, "bluestore_write_small_new",
 	    "Small write into new (sparse) blob");
+
+  b.add_u64(l_bluestore_cur_ops_in_queue, "bluestore_cur_ops_in_queue",
+        "Current ops in queue");
+  b.add_u64(l_bluestore_cur_bytes_in_queue, "bluestore_cur_bytes_in_queue",
+        "Current bytes in queue");
+  b.add_u64(l_bluestore_cur_ops_in_wal_queue, "bluestore_cur_ops_in_wal_queue",
+        "Current wal ops in wal queue");
+  b.add_u64(l_bluestore_cur_bytes_in_wal_queue, "l_bluestore_cur_bytes_in_wal_queue",
+        "Current wal bytes in wal queue");
 
   b.add_u64(l_bluestore_txc, "bluestore_txc", "Transactions committed");
   b.add_u64(l_bluestore_onode_reshard, "bluestore_onode_reshard",
@@ -3241,7 +3257,7 @@ int BlueStore::_open_db(bool create)
     if (::stat(bfn.c_str(), &st) == 0) {
       r = bluefs->add_block_device(BlueFS::BDEV_DB, bfn);
       if (r < 0) {
-        derr << __func__ << " add block device(" << bfn << ") returned: " 
+        derr << __func__ << " add block device(" << bfn << ") returned: "
              << cpp_strerror(r) << dendl;
         goto free_bluefs;
       }
@@ -3273,7 +3289,7 @@ int BlueStore::_open_db(bool create)
     bfn = path + "/block";
     r = bluefs->add_block_device(bluefs_shared_bdev, bfn);
     if (r < 0) {
-      derr << __func__ << " add block device(" << bfn << ") returned: " 
+      derr << __func__ << " add block device(" << bfn << ") returned: "
 	   << cpp_strerror(r) << dendl;
       goto free_bluefs;
     }
@@ -3295,7 +3311,7 @@ int BlueStore::_open_db(bool create)
     if (::stat(bfn.c_str(), &st) == 0) {
       r = bluefs->add_block_device(BlueFS::BDEV_WAL, bfn);
       if (r < 0) {
-        derr << __func__ << " add block device(" << bfn << ") returned: " 
+        derr << __func__ << " add block device(" << bfn << ") returned: "
 	     << cpp_strerror(r) << dendl;
         goto free_bluefs;			
       }
@@ -3659,7 +3675,7 @@ int BlueStore::_open_collections(int *errors)
         derr << __func__ << " failed to decode cnode, key:"
              << pretty_binary_string(it->key()) << dendl;
         return -EIO;
-      }   
+      }
       dout(20) << __func__ << " opened " << cid << dendl;
       coll_map[cid] = c;
     } else {
@@ -3940,6 +3956,13 @@ void BlueStore::set_cache_shards(unsigned num)
 int BlueStore::mount()
 {
   dout(1) << __func__ << " path " << path << dendl;
+
+#ifdef MODEL_THROTTLE
+  {
+    int ret = _set_throttle_params();
+    if (ret != 0) return ret;
+  }
+#endif
 
   {
     string type;
@@ -6434,8 +6457,7 @@ void BlueStore::_txc_finish_kv(TransContext *txc)
     txc->oncommits.pop_front();
   }
 
-  throttle_ops.put(txc->ops);
-  throttle_bytes.put(txc->bytes);
+  op_queue_release_throttle(txc);
 }
 
 void BlueStore::BSPerfTracker::update_from_perfcounters(
@@ -6474,8 +6496,7 @@ void BlueStore::_txc_finish(TransContext *txc)
     txc->removed_collections.pop_front();
   }
 
-  throttle_wal_ops.put(txc->ops);
-  throttle_wal_bytes.put(txc->bytes);
+  op_queue_release_wal_throttle(txc);
 
   OpSequencerRef osr = txc->osr;
   {
@@ -6914,10 +6935,8 @@ int BlueStore::queue_transactions(
   if (handle)
     handle->suspend_tp_timeout();
 
-  throttle_ops.get(txc->ops);
-  throttle_bytes.get(txc->bytes);
-  throttle_wal_ops.get(txc->ops);
-  throttle_wal_bytes.get(txc->bytes);
+  op_queue_reserve_throttle(txc);
+  op_queue_reserve_wal_throttle(txc);
 
   if (handle)
     handle->reset_tp_timeout();
@@ -6927,6 +6946,42 @@ int BlueStore::queue_transactions(
   // execute (start)
   _txc_state_proc(txc);
   return 0;
+}
+
+void BlueStore::op_queue_reserve_throttle(TransContext *txc)
+{
+  throttle_ops.get(txc->ops);
+  throttle_bytes.get(txc->bytes);
+
+  logger->set(l_bluestore_cur_ops_in_queue, throttle_ops.get_current());
+  logger->set(l_bluestore_cur_bytes_in_queue, throttle_bytes.get_current());
+}
+
+void BlueStore::op_queue_release_throttle(TransContext *txc)
+{
+  throttle_ops.put(txc->ops);
+  throttle_bytes.put(txc->bytes);
+
+  logger->set(l_bluestore_cur_ops_in_queue, throttle_ops.get_current());
+  logger->set(l_bluestore_cur_bytes_in_queue, throttle_bytes.get_current());
+}
+
+void BlueStore::op_queue_reserve_wal_throttle(TransContext *txc)
+{
+  throttle_wal_ops.get(txc->ops);
+  throttle_wal_bytes.get(txc->bytes);
+
+  logger->set(l_bluestore_cur_ops_in_wal_queue, throttle_wal_ops.get_current());
+  logger->set(l_bluestore_cur_bytes_in_wal_queue, throttle_wal_bytes.get_current());
+}
+
+void BlueStore::op_queue_release_wal_throttle(TransContext *txc)
+{
+  throttle_wal_ops.put(txc->ops);
+  throttle_wal_bytes.put(txc->bytes);
+
+  logger->set(l_bluestore_cur_ops_in_wal_queue, throttle_wal_ops.get_current());
+  logger->set(l_bluestore_cur_bytes_in_wal_queue, throttle_wal_bytes.get_current());
 }
 
 void BlueStore::_txc_aio_submit(TransContext *txc)
@@ -8009,7 +8064,7 @@ int BlueStore::_do_write(
   }
 
   // FIXME: Using the MAX of the block_size_order and preferred_csum_order
-  // results in poor small random read performance when data was initially 
+  // results in poor small random read performance when data was initially
   // written out in large chunks.  Reverting to previous behavior for now.
   wctx.csum_order = block_size_order;
 
@@ -8017,7 +8072,7 @@ int BlueStore::_do_write(
   unsigned alloc_hints = o->onode.alloc_hint_flags;
   auto cm = select_option(
     "compression_mode",
-    comp_mode.load(), 
+    comp_mode.load(),
     [&]() {
       string val;
       if(c->pool_opts.get(pool_opts_t::COMPRESSION_MODE, &val)) {
@@ -8049,7 +8104,7 @@ int BlueStore::_do_write(
     if (wctx.compress) {
       wctx.target_blob_size = select_option(
         "compression_max_blob_size",
-        comp_max_blob_size.load(), 
+        comp_max_blob_size.load(),
         [&]() {
           int val;
           if(c->pool_opts.get(pool_opts_t::COMPRESSION_MAX_BLOB_SIZE, &val)) {
@@ -8063,7 +8118,7 @@ int BlueStore::_do_write(
     if (wctx.compress) {
       wctx.target_blob_size = select_option(
         "compression_min_blob_size",
-        comp_min_blob_size.load(), 
+        comp_min_blob_size.load(),
         [&]() {
           int val;
           if(c->pool_opts.get(pool_opts_t::COMPRESSION_MIN_BLOB_SIZE, &val)) {
@@ -8941,7 +8996,58 @@ int BlueStore::_split_collection(TransContext *txc,
   return r;
 }
 
+int BlueStore::_set_throttle_params()
+{
+  stringstream ss;
 
+  bool valid = throttle_bytes.set_params(
+    cct->_conf->bluestore_queue_low_threshhold,
+    cct->_conf->bluestore_queue_high_threshhold,
+    cct->_conf->bluestore_expected_throughput_bytes,
+    cct->_conf->bluestore_queue_high_delay_multiple,
+    cct->_conf->bluestore_queue_max_delay_multiple,
+    cct->_conf->bluestore_queue_max_bytes,
+    &ss);
+
+  valid &= throttle_ops.set_params(
+    cct->_conf->bluestore_queue_low_threshhold,
+    cct->_conf->bluestore_queue_high_threshhold,
+    cct->_conf->bluestore_expected_throughput_ops,
+    cct->_conf->bluestore_queue_high_delay_multiple,
+    cct->_conf->bluestore_queue_max_delay_multiple,
+    cct->_conf->bluestore_queue_max_ops,
+    &ss);
+
+  valid &= throttle_wal_bytes.set_params(
+    cct->_conf->bluestore_queue_low_threshhold,
+    cct->_conf->bluestore_queue_high_threshhold,
+    cct->_conf->bluestore_expected_throughput_ops,
+    cct->_conf->bluestore_queue_high_delay_multiple,
+    cct->_conf->bluestore_queue_max_delay_multiple,
+    cct->_conf->bluestore_queue_max_bytes + cct->_conf->bluestore_queue_wal_max_bytes,
+    &ss);
+
+  valid &= throttle_wal_ops.set_params(
+    cct->_conf->bluestore_queue_low_threshhold,
+    cct->_conf->bluestore_queue_high_threshhold,
+    cct->_conf->bluestore_expected_throughput_ops,
+    cct->_conf->bluestore_queue_high_delay_multiple,
+    cct->_conf->bluestore_queue_max_delay_multiple,
+    cct->_conf->bluestore_queue_max_ops + cct->_conf->bluestore_queue_wal_max_ops,
+    &ss);
+
+#if 0
+  logger->set(l_bluestore_op_queue_max_ops, throttle_ops.get_max());
+  logger->set(l_bluestore_op_queue_max_bytes, throttle_bytes.get_max());
+#endif
+
+  if (!valid) {
+    derr << "tried to set invalid params: "
+	 << ss.str()
+	 << dendl;
+  }
+  return valid ? 0 : -EINVAL;
+}
 
 
 // ===========================================
