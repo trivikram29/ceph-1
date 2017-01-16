@@ -39,11 +39,16 @@
 
 #include "bluestore_types.h"
 #include "BlockDevice.h"
+
+
+#define MODEL_THROTTLE
+//#define DEBUG_CACHE
+
+
 class Allocator;
 class FreelistManager;
 class BlueFS;
 
-//#define DEBUG_CACHE
 
 enum {
   l_bluestore_first = 732430,
@@ -202,7 +207,7 @@ public:
       f->dump_unsigned("length", length);
       f->dump_unsigned("data_length", data.length());
     }
-  };
+  }; // struct Buffer
 
   struct Cache;
 
@@ -319,7 +324,7 @@ public:
       }
       f->close_section();
     }
-  };
+  }; // struct BufferSpace
 
   struct SharedBlobSet;
 
@@ -360,7 +365,7 @@ public:
       rjhash<uint32_t> h;
       return h(e.sbid);
     }
-  };
+  }; // struct SharedBlob
   typedef boost::intrusive_ptr<SharedBlob> SharedBlobRef;
 
   /// a lookup table of SharedBlobs
@@ -560,7 +565,7 @@ public:
       }
     }
 #endif
-  };
+  }; // struct Blob
   typedef boost::intrusive_ptr<Blob> BlobRef;
   typedef mempool::bluestore_meta_other::map<int,BlobRef> blob_map_t;
 
@@ -771,7 +776,7 @@ public:
 
     /// split a blob (and referring extents)
     BlobRef split_blob(BlobRef lb, uint32_t blob_offset, uint32_t pos);
-  };
+  }; // struct ExtentMap
 
   struct OnodeSpace;
 
@@ -1211,7 +1216,7 @@ public:
       logger->tinc(state, lat);
       last_stamp = now;
     }
-
+  
     OpSequencerRef osr;
     boost::intrusive::list_member_hook<> sequencer_item;
 
@@ -1521,8 +1526,12 @@ private:
   std::atomic<uint64_t> blobid_last = {0};
   std::atomic<uint64_t> blobid_max = {0};
 
+#ifdef MODEL_THROTTLE
+  CubicModelThrottle throttle_ops, throttle_bytes;          ///< submit to commit
+#else
   Throttle throttle_ops, throttle_bytes;          ///< submit to commit
   Throttle throttle_wal_ops, throttle_wal_bytes;  ///< submit to wal complete
+#endif
 
   interval_set<uint64_t> bluefs_extents;  ///< block extents owned by bluefs
   interval_set<uint64_t> bluefs_extents_reclaiming; ///< currently reclaiming
@@ -1616,6 +1625,8 @@ private:
   void _init_logger();
   void _shutdown_logger();
   int _reload_logger();
+
+  int _set_throttle_params();
 
   int _open_path();
   void _close_path();

@@ -1101,6 +1101,28 @@ OPTION(bluestore_max_ops, OPT_U64, 512)
 OPTION(bluestore_max_bytes, OPT_U64, 64*1024*1024)
 OPTION(bluestore_wal_max_ops, OPT_U64, 512)
 OPTION(bluestore_wal_max_bytes, OPT_U64, 128*1024*1024)
+
+
+OPTION(bluestore_queue_max_ops, OPT_U64, 50)
+OPTION(bluestore_queue_max_bytes, OPT_U64, 100 << 20)
+
+OPTION(bluestore_caller_concurrency, OPT_INT, 10)
+
+/// Expected filestore throughput in B/s
+OPTION(bluestore_expected_throughput_bytes, OPT_DOUBLE, 200 << 20)
+/// Expected filestore throughput in ops/s
+OPTION(bluestore_expected_throughput_ops, OPT_DOUBLE, 200)
+
+/// Filestore max delay multiple.  Defaults to 0 (disabled)
+OPTION(bluestore_queue_max_delay_multiple, OPT_DOUBLE, 0)
+/// Filestore high delay multiple.  Defaults to 0 (disabled)
+OPTION(bluestore_queue_high_delay_multiple, OPT_DOUBLE, 0)
+
+/// Use above to inject delays intended to keep the op queue between low and high
+OPTION(bluestore_queue_low_threshhold, OPT_DOUBLE, 0.3)
+OPTION(bluestore_queue_high_threshhold, OPT_DOUBLE, 0.9)
+
+
 OPTION(bluestore_nid_prealloc, OPT_INT, 1024)
 OPTION(bluestore_blobid_prealloc, OPT_U64, 10240)
 OPTION(bluestore_clone_cow, OPT_BOOL, true)  // do copy-on-write for clones

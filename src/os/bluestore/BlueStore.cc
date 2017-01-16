@@ -2587,6 +2587,10 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
     fsid_fd(-1),
     mounted(false),
     coll_lock("BlueStore::coll_lock"),
+#ifdef MODEL_THROTTLE
+    throttle_ops(cct->_conf->bluestore_caller_concurrency),
+    throttle_bytes(cct->_conf->bluestore_caller_concurrency),
+#else
     throttle_ops(cct, "bluestore_max_ops", cct->_conf->bluestore_max_ops),
     throttle_bytes(cct, "bluestore_max_bytes", cct->_conf->bluestore_max_bytes),
     throttle_wal_ops(cct, "bluestore_wal_max_ops",
@@ -2595,6 +2599,7 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
     throttle_wal_bytes(cct, "bluestore_wal_max_bytes",
 		       cct->_conf->bluestore_max_bytes +
 		       cct->_conf->bluestore_wal_max_bytes),
+#endif
     wal_tp(cct,
 	   "BlueStore::wal_tp",
            "tp_wal",
@@ -4049,6 +4054,13 @@ void BlueStore::set_cache_shards(unsigned num)
 int BlueStore::mount()
 {
   dout(1) << __func__ << " path " << path << dendl;
+
+#ifdef MODEL_THROTTLE
+  {
+    int ret = _set_throttle_params();
+    if (ret != 0) return ret;
+  }
+#endif
 
   {
     string type;
@@ -6598,7 +6610,9 @@ void BlueStore::_txc_finish(TransContext *txc)
     txc->removed_collections.pop_front();
   }
 
+#ifndef MODEL_THROTTLE
   op_queue_release_wal_throttle(txc);
+#endif
 
   OpSequencerRef osr = txc->osr;
   {
@@ -7047,7 +7061,9 @@ int BlueStore::queue_transactions(
     handle->suspend_tp_timeout();
 
   op_queue_reserve_throttle(txc);
+#ifndef MODEL_THROTTLE
   op_queue_reserve_wal_throttle(txc);
+#endif
 
   if (handle)
     handle->reset_tp_timeout();
@@ -7077,6 +7093,8 @@ void BlueStore::op_queue_release_throttle(TransContext *txc)
   logger->set(l_bluestore_cur_bytes_in_queue, throttle_bytes.get_current());
 }
 
+#ifndef MODEL_THROTTLE
+
 void BlueStore::op_queue_reserve_wal_throttle(TransContext *txc)
 {
   throttle_wal_ops.get(txc->ops);
@@ -7094,6 +7112,8 @@ void BlueStore::op_queue_release_wal_throttle(TransContext *txc)
   logger->set(l_bluestore_cur_ops_in_wal_queue, throttle_wal_ops.get_current());
   logger->set(l_bluestore_cur_bytes_in_wal_queue, throttle_wal_bytes.get_current());
 }
+
+#endif
 
 void BlueStore::_txc_aio_submit(TransContext *txc)
 {
@@ -9118,7 +9138,39 @@ int BlueStore::_split_collection(TransContext *txc,
   return r;
 }
 
+int BlueStore::_set_throttle_params()
+{
+  stringstream ss;
+  bool valid = throttle_bytes.set_params(
+    cct->_conf->bluestore_queue_low_threshhold,
+    cct->_conf->bluestore_queue_high_threshhold,
+    cct->_conf->bluestore_expected_throughput_bytes,
+    cct->_conf->bluestore_queue_high_delay_multiple,
+    cct->_conf->bluestore_queue_max_delay_multiple,
+    cct->_conf->bluestore_queue_max_bytes,
+    &ss);
 
+  valid &= throttle_ops.set_params(
+    cct->_conf->bluestore_queue_low_threshhold,
+    cct->_conf->bluestore_queue_high_threshhold,
+    cct->_conf->bluestore_expected_throughput_ops,
+    cct->_conf->bluestore_queue_high_delay_multiple,
+    cct->_conf->bluestore_queue_max_delay_multiple,
+    cct->_conf->bluestore_queue_max_ops,
+    &ss);
+
+#if 0
+  logger->set(l_bluestore_op_queue_max_ops, throttle_ops.get_max());
+  logger->set(l_bluestore_op_queue_max_bytes, throttle_bytes.get_max());
+#endif
+
+  if (!valid) {
+    derr << "tried to set invalid params: "
+	 << ss.str()
+	 << dendl;
+  }
+  return valid ? 0 : -EINVAL;
+}
 
 
 // ===========================================
