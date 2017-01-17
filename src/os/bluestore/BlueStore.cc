@@ -2487,7 +2487,12 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
     fsid_fd(-1),
     mounted(false),
     coll_lock("BlueStore::coll_lock"),
-#ifdef MODEL_THROTTLE
+#if defined MODEL_THROTTLE
+    throttle_ops("ops"),
+    throttle_bytes("bytes"),
+    throttle_wal_ops("wal_ops"),
+    throttle_wal_bytes("wal_bytes"),
+#elif defined CUBIC_THROTTLE
     throttle_ops(cct->_conf->bluestore_caller_concurrency),
     throttle_bytes(cct->_conf->bluestore_caller_concurrency),
     throttle_wal_ops(cct->_conf->bluestore_caller_concurrency),
@@ -3957,7 +3962,7 @@ int BlueStore::mount()
 {
   dout(1) << __func__ << " path " << path << dendl;
 
-#ifdef MODEL_THROTTLE
+#if defined CUBIC_THROTTLE
   {
     int ret = _set_throttle_params();
     if (ret != 0) return ret;
@@ -6950,8 +6955,13 @@ int BlueStore::queue_transactions(
 
 void BlueStore::op_queue_reserve_throttle(TransContext *txc)
 {
+#if defined MODEL_THROTTLE
+  throttle_ops.get(txc->ops, txc);
+  throttle_bytes.get(txc->bytes, txc);
+#else
   throttle_ops.get(txc->ops);
   throttle_bytes.get(txc->bytes);
+#endif
 
   logger->set(l_bluestore_cur_ops_in_queue, throttle_ops.get_current());
   logger->set(l_bluestore_cur_bytes_in_queue, throttle_bytes.get_current());
@@ -6959,8 +6969,16 @@ void BlueStore::op_queue_reserve_throttle(TransContext *txc)
 
 void BlueStore::op_queue_release_throttle(TransContext *txc)
 {
+#if defined MODEL_THROTTLE
+  std::stringstream s1, s2;
+  throttle_ops.put(txc, s1);
+  throttle_bytes.put(txc, s2);
+  dout(0) << "throttle_data " << s1.str() << dendl;
+  dout(0) << "throttle_data " << s2.str() << dendl;
+#else
   throttle_ops.put(txc->ops);
   throttle_bytes.put(txc->bytes);
+#endif
 
   logger->set(l_bluestore_cur_ops_in_queue, throttle_ops.get_current());
   logger->set(l_bluestore_cur_bytes_in_queue, throttle_bytes.get_current());
@@ -6968,8 +6986,13 @@ void BlueStore::op_queue_release_throttle(TransContext *txc)
 
 void BlueStore::op_queue_reserve_wal_throttle(TransContext *txc)
 {
+#if defined MODEL_THROTTLE
+  throttle_wal_ops.get(txc->ops, txc);
+  throttle_wal_bytes.get(txc->bytes, txc);
+#else
   throttle_wal_ops.get(txc->ops);
   throttle_wal_bytes.get(txc->bytes);
+#endif
 
   logger->set(l_bluestore_cur_ops_in_wal_queue, throttle_wal_ops.get_current());
   logger->set(l_bluestore_cur_bytes_in_wal_queue, throttle_wal_bytes.get_current());
@@ -6977,8 +7000,16 @@ void BlueStore::op_queue_reserve_wal_throttle(TransContext *txc)
 
 void BlueStore::op_queue_release_wal_throttle(TransContext *txc)
 {
+#if defined MODEL_THROTTLE
+  std::stringstream s1, s2;
+  throttle_wal_ops.put(txc, s1);
+  throttle_wal_bytes.put(txc, s2);
+  dout(0) << "throttle_data " << s1.str() << dendl;
+  dout(0) << "throttle_data " << s2.str() << dendl;
+#else
   throttle_wal_ops.put(txc->ops);
   throttle_wal_bytes.put(txc->bytes);
+#endif
 
   logger->set(l_bluestore_cur_ops_in_wal_queue, throttle_wal_ops.get_current());
   logger->set(l_bluestore_cur_bytes_in_wal_queue, throttle_wal_bytes.get_current());
@@ -8996,11 +9027,14 @@ int BlueStore::_split_collection(TransContext *txc,
   return r;
 }
 
+#if defined CUBIC_THROTTLE
 int BlueStore::_set_throttle_params()
 {
   stringstream ss;
 
-  bool valid = throttle_bytes.set_params(
+  bool valid = true;
+
+  valid &= throttle_bytes.set_params(
     cct->_conf->bluestore_queue_low_threshhold,
     cct->_conf->bluestore_queue_high_threshhold,
     cct->_conf->bluestore_expected_throughput_bytes,
@@ -9048,6 +9082,7 @@ int BlueStore::_set_throttle_params()
   }
   return valid ? 0 : -EINVAL;
 }
+#endif
 
 
 // ===========================================

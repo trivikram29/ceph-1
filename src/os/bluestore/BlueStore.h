@@ -40,6 +40,8 @@
 #include "bluestore_types.h"
 #include "BlockDevice.h"
 
+#include "common/AltThrottle.h"
+
 
 #define MODEL_THROTTLE
 //#define DEBUG_CACHE
@@ -1492,6 +1494,7 @@ public:
   // --------------------------------------------------------
   // members
 private:
+
   CephContext *cct;
   BlueFS *bluefs;
   unsigned bluefs_shared_bdev;  ///< which bluefs bdev we are sharing
@@ -1515,7 +1518,10 @@ private:
   std::atomic<uint64_t> blobid_last = {0};
   std::atomic<uint64_t> blobid_max = {0};
 
-#ifdef MODEL_THROTTLE
+#if defined MODEL_THROTTLE
+  DataCollectionThrottle<TransContext*> throttle_ops, throttle_bytes;
+  DataCollectionThrottle<TransContext*> throttle_wal_ops, throttle_wal_bytes;
+#elif defined CUBIC_THROTTLE
   CubicModelThrottle throttle_ops, throttle_bytes;          ///< submit to commit
   CubicModelThrottle throttle_wal_ops, throttle_wal_bytes;  ///< submit to commit
 #else
