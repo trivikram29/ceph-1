@@ -6732,20 +6732,84 @@ void BlueStore::_kv_sync_thread()
 	       << " cleaned " << wal_cleaning.size()
 	       << " in " << dur << dendl;
 
-      uint64_t total_ops = 0;
-      uint64_t total_bytes = 0;
-      assert(!kv_committing.empty());
-      utime_t tx_start_time = kv_committing.front()->start;
-      
-      while (!kv_committing.empty()) {
-	TransContext *txc = kv_committing.front();
-	assert(txc->state == TransContext::STATE_KV_SUBMITTED);
-	assert(txc->start > tx_start_time);
-	total_ops += txc->ops;
-	total_bytes += txc->bytes;
-	_txc_state_proc(txc);
-	kv_committing.pop_front();
+      if (!kv_committing.empty()) {
+	utime_t now = ceph_clock_now(cct);
+
+	auto kv_committing_size = kv_committing.size();
+	DataCollectionThrottle<TransContext*>::ThrottleTiming
+	  early_ops_timing_data, early_wal_ops_timing_data,
+	  early_bytes_timing_data, early_wal_bytes_timing_data,
+	  late_ops_timing_data, late_wal_ops_timing_data,
+	  late_bytes_timing_data, late_wal_bytes_timing_data;
+
+	utime_t early_tx_start_time;
+	utime_t late_tx_start_time;
+	uint64_t total_ops = 0;
+	uint64_t total_bytes = 0;
+
+	utime_t early_time_cursor = now;
+	utime_t late_time_cursor = { 0, 0 };
+	while (!kv_committing.empty()) {
+	  TransContext *txc = kv_committing.front();
+	  assert(txc->state == TransContext::STATE_KV_SUBMITTED);
+
+	  // data collection code below; original code above
+
+	  if (txc->start < early_time_cursor) {
+	    early_tx_start_time = txc->start;
+	    early_ops_timing_data =
+	      throttle_ops.get_timing(txc);
+	    early_wal_ops_timing_data =
+	      throttle_wal_ops.get_timing(txc);
+	    early_bytes_timing_data =
+	      throttle_bytes.get_timing(txc);
+	    early_wal_bytes_timing_data =
+	      throttle_wal_bytes.get_timing(txc);
+	    early_time_cursor = txc->start;
+	  }
+	  if (txc->start > late_time_cursor) {
+	    late_tx_start_time = txc->start;
+	    late_ops_timing_data =
+	      throttle_ops.get_timing(txc);
+	    late_wal_ops_timing_data =
+	      throttle_wal_ops.get_timing(txc);
+	    late_bytes_timing_data =
+	      throttle_bytes.get_timing(txc);
+	    late_wal_bytes_timing_data =
+	      throttle_wal_bytes.get_timing(txc);
+	    late_time_cursor = txc->start;
+	  }
+	  total_ops += txc->ops;
+	  total_bytes += txc->bytes;
+
+	  // data collection code above; original code below
+	  
+	  _txc_state_proc(txc);
+	  kv_committing.pop_front();
+	}
+
+	utime_t tx_total_time = now - early_tx_start_time;
+	double average_ops = total_ops / double(kv_committing_size);
+	double average_bytes = total_bytes / double(kv_committing_size);
+
+	dout(0) << "kv_committing_data (" <<
+	  tx_total_time.nsec() << "," <<
+	  kv_committing_size << "," <<
+	  total_ops << "," <<
+	  total_bytes << "," <<
+	  average_ops << "," <<
+	  average_bytes << "," <<
+	  early_ops_timing_data.tx_total_size << "," <<
+	  early_bytes_timing_data.tx_total_size << "," <<
+	  early_wal_ops_timing_data.tx_total_size << "," <<
+	  early_wal_bytes_timing_data.tx_total_size << "," <<
+	  late_ops_timing_data.tx_total_size << "," <<
+	  late_bytes_timing_data.tx_total_size << "," <<
+	  late_wal_ops_timing_data.tx_total_size << "," <<
+	  late_wal_bytes_timing_data.tx_total_size <<
+	  ")" << dendl;
       }
+
       while (!wal_cleaning.empty()) {
 	TransContext *txc = wal_cleaning.front();
 	_txc_state_proc(txc);

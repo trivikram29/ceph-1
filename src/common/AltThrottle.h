@@ -37,20 +37,32 @@ public:
 
 template<typename T>
 class DataCollectionThrottle {
+
+public:
+
   struct ThrottleTiming {
     utime_t start_time;
     uint32_t tx_count;
     uint64_t tx_size;
     uint64_t tx_total_size;
 
-    ThrottleTiming(uint32_t tx_count, uint64_t tx_size, uint64_t tx_total_size) :
+    ThrottleTiming() :
+      tx_count(0),
+      tx_size(0),
+      tx_total_size(0)
+    { }
+
+    ThrottleTiming(uint32_t tx_count,
+		   uint64_t tx_size,
+		   uint64_t tx_total_size) :
       start_time(ceph_clock_now(NULL)),
       tx_count(tx_count),
       tx_size(tx_size),
       tx_total_size(tx_total_size)
     { }
-  };
+  }; // struct ThrottleTiming
 
+private:
   std::string name;
   std::map<T,ThrottleTiming> map;
   uint32_t count;
@@ -70,6 +82,10 @@ public:
 
   uint64_t get_current() {
     return total;
+  }
+
+  const ThrottleTiming& get_timing(T index) {
+    return map.find(index)->second;
   }
 
   void get(uint32_t tx_size, T index) {
