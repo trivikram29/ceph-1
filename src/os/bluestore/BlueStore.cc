@@ -6731,9 +6731,18 @@ void BlueStore::_kv_sync_thread()
       dout(20) << __func__ << " committed " << kv_committing.size()
 	       << " cleaned " << wal_cleaning.size()
 	       << " in " << dur << dendl;
+
+      uint64_t total_ops = 0;
+      uint64_t total_bytes = 0;
+      assert(!kv_committing.empty());
+      utime_t tx_start_time = kv_committing.front()->start;
+      
       while (!kv_committing.empty()) {
 	TransContext *txc = kv_committing.front();
 	assert(txc->state == TransContext::STATE_KV_SUBMITTED);
+	assert(txc->start > tx_start_time);
+	total_ops += txc->ops;
+	total_bytes += txc->bytes;
 	_txc_state_proc(txc);
 	kv_committing.pop_front();
       }

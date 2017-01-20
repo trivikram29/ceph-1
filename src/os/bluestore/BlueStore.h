@@ -1413,7 +1413,7 @@ public:
 	  break;
       }
     }
-  };
+  }; // class OpSequencer
 
   class WALWQ : public ThreadPool::WorkQueue<TransContext> {
     // We need to order WAL items within each Sequencer.  To do that,
