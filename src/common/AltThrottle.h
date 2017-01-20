@@ -11,6 +11,7 @@
 #pragma once
 
 #include <ostream>
+#include <iomanip>
 #include "Mutex.h"
 #include "common/Clock.h"
 
@@ -55,21 +56,16 @@ class DataCollectionThrottle {
   uint32_t count;
   uint64_t total;
   Mutex lock;
+  utime_t start_time; // so it can be subtracted off of arrival times
 
 public:
 
-  DataCollectionThrottle(const std::string& name) :
+  DataCollectionThrottle(const std::string name) :
     name(name),
     count(0),
     total(0),
-    lock(name)
-  { }
-
-  DataCollectionThrottle(const char* name) :
-    name(name),
-    count(0),
-    total(0),
-    lock(name)
+    lock(name),
+    start_time(ceph_clock_now(NULL))
   { }
 
   uint64_t get_current() {
@@ -85,6 +81,7 @@ public:
 
   ostream& put(T index, ostream& out) {
     utime_t duration;
+    utime_t arrival;
     uint64_t count_at_get;
     uint64_t total_at_get;
     {
@@ -92,14 +89,16 @@ public:
       auto it = map.find(index);
       assert(it != map.end());
       --count;
-      count_at_get = it->second.tx_count;
       total -= it->second.tx_size;
+      count_at_get = it->second.tx_count;
       total_at_get = it->second.tx_total_size;
+      arrival = it->second.start_time - start_time;
       duration = ceph_clock_now(NULL) - it->second.start_time;
       map.erase(it);
     }
     out << name << ": (" << count_at_get << "," << total_at_get <<
-      "," << duration.to_nsec() << ")";
+      "," << duration.to_nsec() << "," << std::setprecision(10) <<
+      double(arrival) << ")";
     return out;
   }
 }; // class DataCollectionThrottle
