@@ -3318,7 +3318,7 @@ int BlueStore::_open_db(bool create)
       if (r < 0) {
         derr << __func__ << " add block device(" << bfn << ") returned: "
 	     << cpp_strerror(r) << dendl;
-        goto free_bluefs;			
+        goto free_bluefs;
       }
 
       if (bluefs->bdev_support_label(BlueFS::BDEV_WAL)) {
@@ -6668,6 +6668,22 @@ void BlueStore::_kv_sync_thread()
 	t->set(PREFIX_SUPER, "blobid_max", bl);
 	dout(10) << __func__ << " new_blobid_max " << new_blobid_max << dendl;
       }
+
+      auto kv_submitting_size = kv_submitting.size();
+      DataCollectionThrottle<TransContext*>::ThrottleTiming
+	early_ops_timing_data, early_wal_ops_timing_data,
+	early_bytes_timing_data, early_wal_bytes_timing_data,
+	late_ops_timing_data, late_wal_ops_timing_data,
+	late_bytes_timing_data, late_wal_bytes_timing_data;
+
+      utime_t early_tx_start_time;
+      utime_t late_tx_start_time;
+      uint64_t total_ops = 0;
+      uint64_t total_bytes = 0;
+
+      utime_t early_time_cursor = start;
+      utime_t late_time_cursor;
+
       for (auto txc : kv_submitting) {
 	assert(txc->state == TransContext::STATE_KV_QUEUED);
 	_txc_finalize_kv(txc, txc->t);
@@ -6676,7 +6692,40 @@ void BlueStore::_kv_sync_thread()
 	assert(r == 0);
 	--txc->osr->kv_committing_serially;
 	txc->state = TransContext::STATE_KV_SUBMITTED;
+
+	// data collection code below; original code above
+
+	total_ops += txc->ops;
+	total_bytes += txc->bytes;
+	if (txc->start < early_time_cursor) {
+	  early_tx_start_time = txc->start;
+	  early_ops_timing_data = throttle_ops.get_timing(txc);
+	  early_wal_ops_timing_data = throttle_wal_ops.get_timing(txc);
+	  early_bytes_timing_data = throttle_bytes.get_timing(txc);
+	  early_wal_bytes_timing_data = throttle_wal_bytes.get_timing(txc);
+	  early_time_cursor = txc->start;
+	}
+	if (txc->start > late_time_cursor) {
+	  late_tx_start_time = txc->start;
+	  late_ops_timing_data = throttle_ops.get_timing(txc);
+	  late_wal_ops_timing_data = throttle_wal_ops.get_timing(txc);
+	  late_bytes_timing_data = throttle_bytes.get_timing(txc);
+	  late_wal_bytes_timing_data = throttle_wal_bytes.get_timing(txc);
+	  late_time_cursor = txc->start;
+	}
       }
+
+      // It was found that summing the start times in order to compute
+      // the average did not work, likely due to an overflow. So
+      // instead we'll use this loop um up the deltas for each
+      // TransContext from the earliest in the batch (computed
+      // immediately above). This won't overflow and we can generate
+      // the average (man) latency below.
+      utime_t sum_tx_start_time; // sum up so we can compute mean
+      for (auto txc : kv_submitting) {
+	sum_tx_start_time += txc->start - early_tx_start_time;
+      }
+
       for (auto txc : kv_committing) {
 	_txc_release_alloc(txc);
 	if (txc->had_ios) {
@@ -6713,9 +6762,43 @@ void BlueStore::_kv_sync_thread()
 	synct->rm_single_key(PREFIX_WAL, key);
       }
 
+      utime_t commit_start_time = ceph_clock_now(cct);
+
       // submit synct synchronously (block and wait for it to commit)
       int r = db->submit_transaction_sync(synct);
       assert(r == 0);
+
+      utime_t synced_time = ceph_clock_now(cct);
+      if (kv_submitting_size > 0) {
+	utime_t tx_max_time = synced_time - early_tx_start_time;
+	utime_t tx_avg_start_time;
+	tx_avg_start_time.set_from_double(double(sum_tx_start_time) /
+					  kv_submitting_size);
+
+	utime_t tx_avg_time =
+	  synced_time - tx_avg_start_time - early_tx_start_time;
+	double average_ops = total_ops / double(kv_submitting_size);
+	double average_bytes = total_bytes / double(kv_submitting_size);
+
+	dout(0) << "kv_committing_data (" <<
+	  tx_max_time.to_nsec() << "," <<
+	  kv_submitting_size << "," <<
+	  total_ops << "," <<
+	  total_bytes << "," <<
+	  average_ops << "," <<
+	  average_bytes << "," <<
+	  early_ops_timing_data.tx_total_size << "," <<
+	  early_bytes_timing_data.tx_total_size << "," <<
+	  early_wal_ops_timing_data.tx_total_size << "," <<
+	  early_wal_bytes_timing_data.tx_total_size << "," <<
+	  late_ops_timing_data.tx_total_size << "," <<
+	  late_bytes_timing_data.tx_total_size << "," <<
+	  late_wal_ops_timing_data.tx_total_size << "," <<
+	  late_wal_bytes_timing_data.tx_total_size << "," <<
+	  (synced_time - start).to_nsec() << "," <<
+	  tx_avg_time.to_nsec() <<
+	  ")" << dendl;
+      }
 
       if (new_nid_max) {
 	nid_max = new_nid_max;
@@ -6732,82 +6815,11 @@ void BlueStore::_kv_sync_thread()
 	       << " cleaned " << wal_cleaning.size()
 	       << " in " << dur << dendl;
 
-      if (!kv_committing.empty()) {
-	utime_t now = ceph_clock_now(cct);
-
-	auto kv_committing_size = kv_committing.size();
-	DataCollectionThrottle<TransContext*>::ThrottleTiming
-	  early_ops_timing_data, early_wal_ops_timing_data,
-	  early_bytes_timing_data, early_wal_bytes_timing_data,
-	  late_ops_timing_data, late_wal_ops_timing_data,
-	  late_bytes_timing_data, late_wal_bytes_timing_data;
-
-	utime_t early_tx_start_time;
-	utime_t late_tx_start_time;
-	uint64_t total_ops = 0;
-	uint64_t total_bytes = 0;
-
-	utime_t early_time_cursor = now;
-	utime_t late_time_cursor = { 0, 0 };
-	while (!kv_committing.empty()) {
-	  TransContext *txc = kv_committing.front();
-	  assert(txc->state == TransContext::STATE_KV_SUBMITTED);
-
-	  // data collection code below; original code above
-
-	  if (txc->start < early_time_cursor) {
-	    early_tx_start_time = txc->start;
-	    early_ops_timing_data =
-	      throttle_ops.get_timing(txc);
-	    early_wal_ops_timing_data =
-	      throttle_wal_ops.get_timing(txc);
-	    early_bytes_timing_data =
-	      throttle_bytes.get_timing(txc);
-	    early_wal_bytes_timing_data =
-	      throttle_wal_bytes.get_timing(txc);
-	    early_time_cursor = txc->start;
-	  }
-	  if (txc->start > late_time_cursor) {
-	    late_tx_start_time = txc->start;
-	    late_ops_timing_data =
-	      throttle_ops.get_timing(txc);
-	    late_wal_ops_timing_data =
-	      throttle_wal_ops.get_timing(txc);
-	    late_bytes_timing_data =
-	      throttle_bytes.get_timing(txc);
-	    late_wal_bytes_timing_data =
-	      throttle_wal_bytes.get_timing(txc);
-	    late_time_cursor = txc->start;
-	  }
-	  total_ops += txc->ops;
-	  total_bytes += txc->bytes;
-
-	  // data collection code above; original code below
-	  
-	  _txc_state_proc(txc);
-	  kv_committing.pop_front();
-	}
-
-	utime_t tx_total_time = now - early_tx_start_time;
-	double average_ops = total_ops / double(kv_committing_size);
-	double average_bytes = total_bytes / double(kv_committing_size);
-
-	dout(0) << "kv_committing_data (" <<
-	  tx_total_time.nsec() << "," <<
-	  kv_committing_size << "," <<
-	  total_ops << "," <<
-	  total_bytes << "," <<
-	  average_ops << "," <<
-	  average_bytes << "," <<
-	  early_ops_timing_data.tx_total_size << "," <<
-	  early_bytes_timing_data.tx_total_size << "," <<
-	  early_wal_ops_timing_data.tx_total_size << "," <<
-	  early_wal_bytes_timing_data.tx_total_size << "," <<
-	  late_ops_timing_data.tx_total_size << "," <<
-	  late_bytes_timing_data.tx_total_size << "," <<
-	  late_wal_ops_timing_data.tx_total_size << "," <<
-	  late_wal_bytes_timing_data.tx_total_size <<
-	  ")" << dendl;
+      while (!kv_committing.empty()) {
+	TransContext *txc = kv_committing.front();
+	assert(txc->state == TransContext::STATE_KV_SUBMITTED);
+	_txc_state_proc(txc);
+	kv_committing.pop_front();
       }
 
       while (!wal_cleaning.empty()) {
