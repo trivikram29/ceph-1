@@ -6339,6 +6339,26 @@ void BlueStore::_txc_finish_io(TransContext *txc)
   std::lock_guard<std::mutex> l(osr->qlock);
   txc->state = TransContext::STATE_IO_DONE;
 
+  txc->aio_done_time = ceph_clock_now(cct);
+
+#if 1
+  auto ops = throttle_ops.get_timing(txc);
+  auto bytes = throttle_bytes.get_timing(txc);
+  auto wal_ops = throttle_wal_ops.get_timing(txc);
+  auto wal_bytes = throttle_wal_bytes.get_timing(txc);
+    dout(0) << "trans_context_io_done_data (" <<
+      (ceph_clock_now(cct) - txc->start).to_nsec() << "," <<
+      ops.get_tx_size() << "," <<
+      wal_ops.get_tx_size() << "," <<
+      bytes.get_tx_size() << "," <<
+      wal_bytes.get_tx_size() << "," <<
+      ops.get_tx_total_size() << "," <<
+      wal_ops.get_tx_total_size() << "," <<
+      bytes.get_tx_total_size() << "," <<
+      wal_bytes.get_tx_total_size() <<
+      ")" << dendl;
+#endif
+
   OpSequencer::q_list_t::iterator p = osr->q.iterator_to(*txc);
   while (p != osr->q.begin()) {
     --p;
@@ -6697,20 +6717,24 @@ void BlueStore::_kv_sync_thread()
 
 	total_ops += txc->ops;
 	total_bytes += txc->bytes;
+	auto ops = throttle_ops.get_timing(txc);
+	auto bytes = throttle_bytes.get_timing(txc);
+	auto wal_ops = throttle_wal_ops.get_timing(txc);
+	auto wal_bytes = throttle_wal_bytes.get_timing(txc);
 	if (txc->start < early_time_cursor) {
 	  early_tx_start_time = txc->start;
-	  early_ops_timing_data = throttle_ops.get_timing(txc);
-	  early_wal_ops_timing_data = throttle_wal_ops.get_timing(txc);
-	  early_bytes_timing_data = throttle_bytes.get_timing(txc);
-	  early_wal_bytes_timing_data = throttle_wal_bytes.get_timing(txc);
+	  early_ops_timing_data = ops;
+	  early_wal_ops_timing_data = wal_ops;
+	  early_bytes_timing_data = bytes;
+	  early_wal_bytes_timing_data = wal_bytes;
 	  early_time_cursor = txc->start;
 	}
 	if (txc->start > late_time_cursor) {
 	  late_tx_start_time = txc->start;
-	  late_ops_timing_data = throttle_ops.get_timing(txc);
-	  late_wal_ops_timing_data = throttle_wal_ops.get_timing(txc);
-	  late_bytes_timing_data = throttle_bytes.get_timing(txc);
-	  late_wal_bytes_timing_data = throttle_wal_bytes.get_timing(txc);
+	  late_ops_timing_data = ops;
+	  late_wal_ops_timing_data = wal_ops;
+	  late_bytes_timing_data = bytes;
+	  late_wal_bytes_timing_data = wal_bytes;
 	  late_time_cursor = txc->start;
 	}
       }
@@ -6787,14 +6811,14 @@ void BlueStore::_kv_sync_thread()
 	  total_bytes << "," <<
 	  average_ops << "," <<
 	  average_bytes << "," <<
-	  early_ops_timing_data.tx_total_size << "," <<
-	  early_bytes_timing_data.tx_total_size << "," <<
-	  early_wal_ops_timing_data.tx_total_size << "," <<
-	  early_wal_bytes_timing_data.tx_total_size << "," <<
-	  late_ops_timing_data.tx_total_size << "," <<
-	  late_bytes_timing_data.tx_total_size << "," <<
-	  late_wal_ops_timing_data.tx_total_size << "," <<
-	  late_wal_bytes_timing_data.tx_total_size << "," <<
+	  early_ops_timing_data.get_tx_total_size() << "," <<
+	  early_bytes_timing_data.get_tx_total_size() << "," <<
+	  early_wal_ops_timing_data.get_tx_total_size() << "," <<
+	  early_wal_bytes_timing_data.get_tx_total_size() << "," <<
+	  late_ops_timing_data.get_tx_total_size() << "," <<
+	  late_bytes_timing_data.get_tx_total_size() << "," <<
+	  late_wal_ops_timing_data.get_tx_total_size() << "," <<
+	  late_wal_bytes_timing_data.get_tx_total_size() << "," <<
 	  (synced_time - start).to_nsec() << "," <<
 	  tx_avg_time.to_nsec() <<
 	  ")" << dendl;
@@ -7058,8 +7082,17 @@ void BlueStore::op_queue_release_throttle(TransContext *txc)
   std::stringstream s1, s2;
   throttle_ops.put(txc, s1);
   throttle_bytes.put(txc, s2);
+
+#if 1
   dout(0) << "throttle_data " << s1.str() << dendl;
   dout(0) << "throttle_data " << s2.str() << dendl;
+#else
+  utime_t time_to_aio_done = txc->aio_done_time - txc->start;
+  dout(0) << "throttle_data: (" << s1.str() << "," <<
+    double(time_to_aio_done) << ")" << dendl;
+  dout(0) << "throttle_data: (" << s2.str() << "," <<
+    double(time_to_aio_done) << ")" << dendl;
+#endif
 #else
   throttle_ops.put(txc->ops);
   throttle_bytes.put(txc->bytes);
@@ -7089,8 +7122,16 @@ void BlueStore::op_queue_release_wal_throttle(TransContext *txc)
   std::stringstream s1, s2;
   throttle_wal_ops.put(txc, s1);
   throttle_wal_bytes.put(txc, s2);
+#if 1
   dout(0) << "throttle_data " << s1.str() << dendl;
   dout(0) << "throttle_data " << s2.str() << dendl;
+#else
+  utime_t time_to_aio_done = txc->aio_done_time - txc->start;
+  dout(0) << "throttle_data: (" << s1.str() << "," <<
+    double(time_to_aio_done) << ")" << dendl;
+  dout(0) << "throttle_data: (" << s2.str() << "," <<
+    double(time_to_aio_done) << ")" << dendl;
+#endif
 #else
   throttle_wal_ops.put(txc->ops);
   throttle_wal_bytes.put(txc->bytes);

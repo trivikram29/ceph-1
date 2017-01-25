@@ -1299,6 +1299,9 @@ public:
     utime_t start;
     utime_t last_stamp;
 
+    // TEMPORARY for data collection
+    utime_t aio_done_time;
+
     uint64_t last_nid = 0;     ///< if non-zero, highest new nid we allocated
     uint64_t last_blobid = 0;  ///< if non-zero, highest new blobid we allocated
 

@@ -12,6 +12,7 @@
 
 #include <ostream>
 #include <iomanip>
+#include <boost/optional.hpp>
 #include "Mutex.h"
 #include "common/Clock.h"
 
@@ -40,11 +41,15 @@ class DataCollectionThrottle {
 
 public:
 
-  struct ThrottleTiming {
+  class ThrottleTiming {
+    friend DataCollectionThrottle;
+    
     utime_t start_time;
     uint32_t tx_count;
     uint64_t tx_size;
     uint64_t tx_total_size;
+
+  public:
 
     ThrottleTiming() :
       tx_count(0),
@@ -52,15 +57,20 @@ public:
       tx_total_size(0)
     { }
 
-    ThrottleTiming(uint32_t tx_count,
-		   uint64_t tx_size,
-		   uint64_t tx_total_size) :
+    ThrottleTiming(uint32_t _tx_count,
+		   uint64_t _tx_size,
+		   uint64_t _tx_total_size) :
       start_time(ceph_clock_now(NULL)),
-      tx_count(tx_count),
-      tx_size(tx_size),
-      tx_total_size(tx_total_size)
+      tx_count(_tx_count),
+      tx_size(_tx_size),
+      tx_total_size(_tx_total_size)
     { }
-  }; // struct ThrottleTiming
+
+    inline utime_t get_start_time() const { return start_time; }
+    inline uint32_t get_tx_count() const { return tx_count; }
+    inline uint64_t get_tx_size() const { return tx_size; }
+    inline uint64_t get_tx_total_size() const { return tx_total_size; }
+  }; // ThrottleTiming
 
 private:
   std::string name;
@@ -85,13 +95,18 @@ public:
   }
 
   const ThrottleTiming& get_timing(T index) {
-    return map.find(index)->second;
+    Mutex::Locker l(lock);
+    auto it = map.find(index);
+    assert(map.end() != it);
+    return it->second;
   }
 
-  void get(uint32_t tx_size, T index) {
+  void get(uint64_t tx_size, T index) {
     Mutex::Locker l(lock);
     total += tx_size;
     ++count;
+    auto it = map.find(index);
+    assert(map.end() == it);
     map.emplace(index, ThrottleTiming(count, tx_size, total));
   }
 
@@ -103,7 +118,7 @@ public:
     {
       Mutex::Locker l(lock);
       auto it = map.find(index);
-      assert(it != map.end());
+      assert(map.end() != it);
       --count;
       total -= it->second.tx_size;
       count_at_get = it->second.tx_count;
@@ -112,9 +127,16 @@ public:
       duration = ceph_clock_now(NULL) - it->second.start_time;
       map.erase(it);
     }
-    out << name << ": (" << count_at_get << "," << total_at_get <<
-      "," << duration.to_nsec() << "," << std::setprecision(10) <<
+
+#if 1
+    out << name << ": (" << count_at_get << "," << total_at_get << "," <<
+      duration.to_nsec() << "," << std::setprecision(10) <<
       double(arrival) << ")";
+#else
+    out << name << "," << count_at_get << "," << total_at_get << "," <<
+      duration.to_nsec() << "," <<
+      std::setprecision(10) << double(arrival);
+#endif
     return out;
   }
 }; // class DataCollectionThrottle
