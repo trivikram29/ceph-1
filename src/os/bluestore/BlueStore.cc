@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <ios>
 
 #include "BlueStore.h"
 #include "kv.h"
@@ -6704,6 +6705,9 @@ void BlueStore::_kv_sync_thread()
       utime_t early_time_cursor = start;
       utime_t late_time_cursor;
 
+      uint64_t sum_to_aio_time = 0;
+      uint64_t max_to_aio_time = 0;
+
       for (auto txc : kv_submitting) {
 	assert(txc->state == TransContext::STATE_KV_QUEUED);
 	_txc_finalize_kv(txc, txc->t);
@@ -6717,6 +6721,10 @@ void BlueStore::_kv_sync_thread()
 
 	total_ops += txc->ops;
 	total_bytes += txc->bytes;
+	uint64_t to_aio_time = (txc->aio_done_time - txc->start).to_nsec();
+	sum_to_aio_time += to_aio_time;
+	if (to_aio_time > max_to_aio_time) max_to_aio_time = to_aio_time;
+	
 	auto ops = throttle_ops.get_timing(txc);
 	auto bytes = throttle_bytes.get_timing(txc);
 	auto wal_ops = throttle_wal_ops.get_timing(txc);
@@ -6809,8 +6817,8 @@ void BlueStore::_kv_sync_thread()
 	  kv_submitting_size << "," <<
 	  total_ops << "," <<
 	  total_bytes << "," <<
-	  average_ops << "," <<
-	  average_bytes << "," <<
+	  std::fixed << average_ops << "," <<
+	  std::fixed << average_bytes << "," <<
 	  early_ops_timing_data.get_tx_total_size() << "," <<
 	  early_bytes_timing_data.get_tx_total_size() << "," <<
 	  early_wal_ops_timing_data.get_tx_total_size() << "," <<
@@ -6820,7 +6828,9 @@ void BlueStore::_kv_sync_thread()
 	  late_wal_ops_timing_data.get_tx_total_size() << "," <<
 	  late_wal_bytes_timing_data.get_tx_total_size() << "," <<
 	  (synced_time - start).to_nsec() << "," <<
-	  tx_avg_time.to_nsec() <<
+	  tx_avg_time.to_nsec() << "," <<
+	  max_to_aio_time << "," <<
+	  std::fixed << sum_to_aio_time / double(kv_submitting_size) <<
 	  ")" << dendl;
       }
 
