@@ -6811,6 +6811,8 @@ void BlueStore::_kv_sync_thread()
 	  synced_time - tx_avg_start_time - early_tx_start_time;
 	double average_ops = total_ops / double(kv_submitting_size);
 	double average_bytes = total_bytes / double(kv_submitting_size);
+	double throughput = 1e9 * double(total_bytes) /
+	  (synced_time - early_tx_start_time).to_nsec();
 
 	dout(0) << "kv_committing_data (" <<
 	  tx_max_time.to_nsec() << "," <<
@@ -6830,7 +6832,8 @@ void BlueStore::_kv_sync_thread()
 	  (synced_time - start).to_nsec() << "," <<
 	  tx_avg_time.to_nsec() << "," <<
 	  max_to_aio_time << "," <<
-	  std::fixed << sum_to_aio_time / double(kv_submitting_size) <<
+	  std::fixed << sum_to_aio_time / double(kv_submitting_size) << "," <<
+	  throughput <<
 	  ")" << dendl;
       }
 
