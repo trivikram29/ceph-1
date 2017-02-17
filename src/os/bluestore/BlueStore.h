@@ -1494,6 +1494,74 @@ public:
     }
   };
 
+
+  class WeightedAverageDataCollector {
+    const double delta;
+    double weighted_sum;
+    double total_weight;
+    utime_t last_out;
+
+  public:
+    explicit WeightedAverageDataCollector(double delta, utime_t now) :
+      delta(delta),
+      weighted_sum(0),
+      total_weight(0),
+      last_out(now)
+    {
+      // empty
+    }
+
+    explicit WeightedAverageDataCollector(double delta) :
+      WeightedAverageDataCollector(delta, utime_t())
+    {
+      // empty
+    }
+
+    void add(double value, double weight) {
+      weighted_sum += value * weight;
+      total_weight += weight;
+    }
+
+    void add_adjustment(double value, double weight) {
+      weighted_sum += value * weight;
+    }
+
+#if 0
+    void set_last_out(const utime_t time) {
+      last_out = time;
+    }
+#endif
+
+    bool has_average() const {
+      return total_weight > 0.0;
+    }
+
+    double get_average() const {
+      return weighted_sum / total_weight;
+    }
+
+    void handle_cycle(utime_t now,
+		      std::function<void(double, double)> f) {
+      if (last_out.is_zero()) {
+	last_out = now;
+	return;
+      }
+
+      if (now - last_out >= delta) {
+	if (has_average()) {
+	  f(total_weight, get_average());
+	}
+
+	weighted_sum = 0.0;
+	total_weight = 0.0;
+
+	int cycles_passed = int((now - last_out) / delta);
+	last_out += delta * cycles_passed;
+      }
+    }
+  }; // WeightedAverageDataCollector
+
+
   // --------------------------------------------------------
   // members
 private:
@@ -1531,6 +1599,9 @@ private:
   Throttle throttle_ops, throttle_bytes;          ///< submit to commit
   Throttle throttle_wal_ops, throttle_wal_bytes;  ///< submit to wal complete
 #endif
+  WeightedAverageDataCollector half_sec_coll;
+  WeightedAverageDataCollector one_sec_coll;
+  WeightedAverageDataCollector five_sec_coll;
 
   interval_set<uint64_t> bluefs_extents;  ///< block extents owned by bluefs
 

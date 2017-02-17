@@ -2508,6 +2508,9 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
 		       cct->_conf->bluestore_max_bytes +
 		       cct->_conf->bluestore_wal_max_bytes),
 #endif
+    half_sec_coll(0.5),
+    one_sec_coll(1.0),
+    five_sec_coll(5.0),
     wal_tp(cct,
 	   "BlueStore::wal_tp",
            "tp_wal",
@@ -6629,6 +6632,7 @@ void BlueStore::_txc_release_alloc(TransContext *txc)
   txc->released.clear();
 }
 
+
 void BlueStore::_kv_sync_thread()
 {
   dout(10) << __func__ << " start" << dendl;
@@ -6708,6 +6712,29 @@ void BlueStore::_kv_sync_thread()
       uint64_t sum_to_aio_time = 0;
       uint64_t max_to_aio_time = 0;
 
+      utime_t pre_submit_time = ceph_clock_now(cct);
+      half_sec_coll.handle_cycle(pre_submit_time,
+				 [&] (double bytes, double latency) {
+				   dout(0) << "kv_averaged_data (0.5," <<
+				     bytes << "," <<
+				     latency <<
+				     ")" << dendl;
+				 });
+      one_sec_coll.handle_cycle(pre_submit_time,
+				[&] (double bytes, double latency) {
+				  dout(0) << "kv_averaged_data (1.0," <<
+				    bytes << "," <<
+				    latency <<
+				    ")" << dendl;
+				});
+      five_sec_coll.handle_cycle(pre_submit_time,
+				 [&] (double bytes, double latency) {
+				   dout(0) << "kv_averaged_data (5.0," <<
+				     bytes << "," <<
+				     latency <<
+				     ")" << dendl;
+				 });
+
       for (auto txc : kv_submitting) {
 	assert(txc->state == TransContext::STATE_KV_QUEUED);
 	_txc_finalize_kv(txc, txc->t);
@@ -6724,7 +6751,11 @@ void BlueStore::_kv_sync_thread()
 	uint64_t to_aio_time = (txc->aio_done_time - txc->start).to_nsec();
 	sum_to_aio_time += to_aio_time;
 	if (to_aio_time > max_to_aio_time) max_to_aio_time = to_aio_time;
-	
+
+	half_sec_coll.add(pre_submit_time - txc->start, txc->bytes);
+	one_sec_coll.add(pre_submit_time - txc->start, txc->bytes);
+	five_sec_coll.add(pre_submit_time - txc->start, txc->bytes);
+
 	auto ops = throttle_ops.get_timing(txc);
 	auto bytes = throttle_bytes.get_timing(txc);
 	auto wal_ops = throttle_wal_ops.get_timing(txc);
@@ -6801,6 +6832,9 @@ void BlueStore::_kv_sync_thread()
       assert(r == 0);
 
       utime_t synced_time = ceph_clock_now(cct);
+      half_sec_coll.add_adjustment(synced_time - pre_submit_time, total_bytes);
+      one_sec_coll.add_adjustment(synced_time - pre_submit_time, total_bytes);
+      five_sec_coll.add_adjustment(synced_time - pre_submit_time, total_bytes);
       if (kv_submitting_size > 0) {
 	utime_t tx_max_time = synced_time - early_tx_start_time;
 	utime_t tx_avg_start_time;
