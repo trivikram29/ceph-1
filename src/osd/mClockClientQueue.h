@@ -50,7 +50,42 @@ namespace ceph {
     enum class osd_op_type_t {
       client_op, osd_subop, bg_snaptrim, bg_recovery, bg_scrub };
 
-    using InnerClient = std::pair<entity_inst_t,osd_op_type_t>;
+    struct dmclock_variables {
+      double reservation, weight, limit;
+      
+      dmclock_variables() {}
+      dmclock_variables(double res, double wt, double lim) {
+        reservation = res;
+        weight = wt;
+        limit = lim;
+      }
+
+      friend bool operator==(const dmclock_variables& var1, const dmclock_variables& var2) {
+        if(var1.reservation == var2.reservation && var1.weight == var2.weight && var1.limit == var2.limit) return true;
+        return false;
+      }
+
+      friend bool operator<(const dmclock_variables& var1, const dmclock_variables& var2) {
+        if(var1.reservation < var2.reservation && var1.weight < var2.weight && var1.limit < var2.limit) return true;
+        return false;
+      }
+
+      friend std::ostream& operator<<(std::ostream& out,
+                                     const dmclock_variables& var) {
+       out <<
+         "{ r:" << var.reservation <<
+         " w:" << var.weight <<
+         " l:" << var.limit << "  ";
+       return out;
+      }
+
+
+    };
+
+    using dmclock_varRef = std::shared_ptr<dmclock_variables>;
+    std::map<Client, dmclock_varRef> dmclockvar_map;
+
+    using InnerClient = std::pair<std::pair<entity_inst_t, dmclock_variables>, osd_op_type_t>;
 
     using queue_t = mClockQueue<Request, InnerClient>;
 

@@ -64,6 +64,10 @@ private:
 
   uint64_t features;
 
+  __u32 dmclock_reservation = 60;
+  __u32 dmclock_weight = 60;
+  __u32 dmclock_limit = 0;
+
   osd_reqid_t reqid; // reqid explicitly set by sender
 
 public:
@@ -169,7 +173,10 @@ public:
       oid(_oid), oloc(_oloc), pgid(_pgid),
       partial_decode_needed(false),
       final_decode_needed(false),
-      features(feat) {
+      features(feat),
+      dmclock_reservation(600.0),
+      dmclock_weight(500.0),
+      dmclock_limit(1000.0) {
     set_tid(tid);
 
     // also put the client_inc in reqid.inc, so that get_reqid() can
@@ -185,6 +192,17 @@ public:
   void set_mtime(ceph::real_time mt) {
     mtime = ceph::real_clock::to_timespec(mt);
   }
+
+  void set_dmclock_variables(__u32 res, __u32 weight, __u32 limit)
+  {
+    dmclock_reservation = res;
+    dmclock_weight      = weight;
+    dmclock_limit       = limit;
+  }
+
+  __u32 get_dmclock_reservation() const { return dmclock_reservation;}
+  __u32 get_dmclock_weight() const { return dmclock_weight;}
+  __u32 get_dmclock_limit() const { return dmclock_limit;}
 
   // ops
   void add_simple_op(int o, uint64_t off, uint64_t len) {
@@ -333,6 +351,11 @@ struct ceph_osd_request_head {
       ::encode(flags, payload);
       ::encode(reassert_version, payload);
       ::encode(reqid, payload);
+      //dmclock_variables
+      ::encode(dmclock_reservation, payload);
+      ::encode(dmclock_weight, payload);
+      ::encode(dmclock_limit, payload);
+      //
       ::encode(client_inc, payload);
       ::encode(mtime, payload);
       ::encode(oloc, payload);
@@ -363,6 +386,9 @@ struct ceph_osd_request_head {
 	  ::decode(flags, p);
 	  ::decode(reassert_version, p);
 	  ::decode(reqid, p);
+          ::decode(dmclock_reservation, p);
+          ::decode(dmclock_weight, p);
+          ::decode(dmclock_limit, p);
     } else if (header.version < 2) {
       // old decode
       ::decode(client_inc, p);

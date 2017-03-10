@@ -728,7 +728,7 @@ OPTION(osd_recovery_threads, OPT_INT, 1)
 OPTION(osd_recover_clone_overlap, OPT_BOOL, true)   // preserve clone_overlap during recovery/migration
 OPTION(osd_op_num_threads_per_shard, OPT_INT, 2)
 OPTION(osd_op_num_shards, OPT_INT, 5)
-OPTION(osd_op_queue, OPT_STR, "wpq") // PrioritzedQueue (prio), Weighted Priority Queue (wpq), mclock_opclass, mclock_client, or debug_random
+OPTION(osd_op_queue, OPT_STR, "mclock_client") // PrioritzedQueue (prio), Weighted Priority Queue (wpq), mclock_opclass, mclock_client, or debug_random
 OPTION(osd_op_queue_cut_off, OPT_STR, "low") // Min priority to go to strict queue. (low, high, debug_random)
 
 // mclock specific parameters
@@ -739,6 +739,10 @@ OPTION(osd_op_queue_mclock_cost_factor, OPT_INT, 10) // increases weighted queue
 OPTION(osd_op_queue_mclock_client_op_res, OPT_DOUBLE, 1000.0)
 OPTION(osd_op_queue_mclock_client_op_wgt, OPT_DOUBLE, 500.0)
 OPTION(osd_op_queue_mclock_client_op_lim, OPT_DOUBLE, 0.0)
+
+OPTION(client_op_queue_mclock_client_op_res, OPT_DOUBLE, 1000.0)
+OPTION(client_op_queue_mclock_client_op_wgt, OPT_DOUBLE, 500.0)
+OPTION(client_op_queue_mclock_client_op_lim, OPT_DOUBLE, 0.0)
 
 OPTION(osd_op_queue_mclock_osd_subop_res, OPT_DOUBLE, 1000.0)
 OPTION(osd_op_queue_mclock_osd_subop_wgt, OPT_DOUBLE, 500.0)
