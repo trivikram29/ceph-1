@@ -9453,22 +9453,3 @@ std::ostream& operator<<(std::ostream& out, const OSD::io_queue& q) {
   }
   return out;
 }
-
-
-std::ostream& operator<<(std::ostream& out, const OSD::io_queue& q) {
-  switch(q) {
-  case OSD::io_queue::prioritized:
-    out << "prioritized";
-    break;
-  case OSD::io_queue::weightedpriority:
-    out << "weightedpriority";
-    break;
-  case OSD::io_queue::mclock_opclass:
-    out << "mclock_opclass";
-    break;
-  case OSD::io_queue::mclock_client:
-    out << "mclock_client";
-    break;
-  }
-  return out;
-}

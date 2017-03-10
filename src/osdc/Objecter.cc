@@ -3081,6 +3081,17 @@ MOSDOp *Objecter::_prepare_osd_op(Op *op)
     m->set_reqid(op->reqid);
   }
 
+  m->set_dmclock_variables(cct->_conf->client_op_queue_mclock_client_op_res,
+                           cct->_conf->client_op_queue_mclock_client_op_wgt,
+                           cct->_conf->client_op_queue_mclock_client_op_lim);
+
+   /*ldout(cct, 15) << "trivik res " << cct->_conf->client_op_queue_mclock_client_op_res << " wgt " << cct->_conf->client_op_queue_mclock_client_op_wgt
+                << dendl;
+
+   std::cout << "trivik res " << cct->_conf->client_op_queue_mclock_client_op_res
+             << " wgt " << cct->_conf->client_op_queue_mclock_client_op_wgt
+            << std::endl;*/
+
   logger->inc(l_osdc_op_send);
   logger->inc(l_osdc_op_send_bytes, m->get_data().length());
 
